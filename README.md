@@ -140,3 +140,14 @@ If something doesn’t work:
 * Try running the app again
 
 You can also open an issue on GitHub.
+
+## 🖼 Preview
+
+### Shloka Popup
+![Shloka Popup](images/popup.png)
+
+### Settings Window
+![Settings Window](images/settings.png)
+
+### ShlokaManager
+![ShlokaManager](images/shlokamanager.png)

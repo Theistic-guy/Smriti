@@ -8,7 +8,7 @@ A simple Windows app that quietly shows shlokas on your screen while you work.
 
 ### 1. Download
 
-👉 https://github.com/Theistic-guy/Smriti/releases/latest
+👉 https://github.com/Theistic-guy/Smriti/releases/download/v1.0.0/Smriti-Windows.zip
 
 * Download the `.zip` file
 

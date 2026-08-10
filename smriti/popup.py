@@ -1,46 +1,32 @@
 """
 popup.py — The floating shloka card.
 
-Layout (top to bottom, all fixed relative to the *configured* base
-height — none of it moves when the card expands to show a meaning):
-  1. Sanskrit verse, top-aligned, auto-shrinking font (see below).
-  2. Reference tag, right-aligned, just above the button row.
-  3. The "i" (show meaning) and "x" (close) icon buttons.
-When "i" is pressed, the card grows *downward* and the translation is
-painted into that newly-added space, below the button row. Items 1-3
-never move — only new space appears beneath them.
+Default view shows only the Sanskrit verse and its reference tag.
+Two small icon-only buttons sit in the top-right corner:
+  - an "i" (meaning) button that reveals the translation in place,
+    expanding the card's height to fit it. While the meaning is open,
+    the auto-hide timer is paused (via meaning_toggled signal) so a
+    long translation is never cut off mid-read.
+  - a "×" (close) button that dismisses the popup immediately.
+
+Both are QToolButtons with NoFocus policy and autoRaise styling, so
+neither can trigger a platform "beep" (which normally comes from a
+button reacting to Enter/Return as an implicit default action — these
+buttons are never focusable, so that can't happen) and neither steals
+keyboard focus from whatever the user was doing.
 
 Layout note: how tall the card must grow to fit the translation
 (_expand_for_meaning) and where the translation actually gets painted
-(paintEvent) both go through the single `_compute_layout` helper below,
-so the two can never quietly disagree about how much room something
-needs (that mismatch used to clip the last line of the translation).
-
-Font note: the Sanskrit verse is the one thing that has no "grow the
-box" escape hatch — the collapsed card height is whatever you set it
-to. So if the verse wouldn't fit at your configured font size within
-that fixed space, it's rendered a little smaller instead of clipping —
-never larger than what you set, only smaller, and only as far as
-necessary. The translation isn't auto-shrunk since it already has the
-box-growth mechanism (up to appearance/max_meaning_height) to fall
-back on.
-
-Click-through note: with behaviour/click_through enabled, a plain
-click (press+release with no real movement) on the card's background
-is replayed onto whatever's underneath instead of being swallowed —
-implemented by very briefly hiding the popup and synthesizing the
-click via the Windows API, since this is Windows-only for now. An
-actual drag (press+move past a small threshold) is always handled
-directly by this widget and never passed through, regardless of the
-setting, so the card stays movable either way. Clicks on the icon
-buttons are unaffected either way, since they're separate child
-widgets that consume their own events before this logic ever runs.
+(paintEvent) both go through the single `_compute_layout` helper below.
+They used to use two independently-hand-tuned formulas that quietly
+disagreed by ~10-20px, which clipped the last line of the translation.
+Routing both through one function makes that class of bug impossible —
+whatever height is reserved is exactly the height that's painted into,
+at any font size.
 """
 
 from __future__ import annotations
-import ctypes
-import sys
-from PySide6.QtWidgets import QWidget, QToolButton, QApplication
+from PySide6.QtWidgets import QWidget, QToolButton
 from PySide6.QtCore import Qt, QPoint, QRectF, QPropertyAnimation, QEasingCurve, Signal, QSize
 from PySide6.QtGui import QPainter, QColor, QPainterPath, QFont, QFontMetrics
 
@@ -50,16 +36,12 @@ from .shloka_source import Shloka
 BUTTON_SIZE = 28
 BUTTON_MARGIN = 10
 
-CARD_PAD = 22               # inner padding: left/right/top
-GAP_SANS_TO_REF = 8         # gap: sanskrit block -> reference tag
-GAP_REF_TO_BUTTONS = 6      # gap: reference tag (or sanskrit, if no ref) -> button row
-GAP_BUTTONS_TO_TRANS = 12   # gap: button row -> translation (only when expanded)
-SEP_GAP = 8                 # gap: separator line -> translation text
-BOTTOM_PAD = 16             # breathing room below the translation
-TEXT_SAFETY_BUFFER = 4      # small cushion against font metric rounding
-
-MIN_SANSKRIT_FONT_SIZE = 9  # never auto-shrink the verse smaller than this
-DRAG_THRESHOLD_PX = 4       # movement beyond this counts as a drag, not a click
+CARD_PAD = 22                                    # inner padding on all sides
+TOP_CLEAR = BUTTON_SIZE + BUTTON_MARGIN + 6       # room reserved for the icon buttons
+SECTION_GAP = 12                                  # gap: sanskrit -> separator
+SEP_GAP = 10                                      # gap: separator -> translation
+BOTTOM_PAD = 16                                   # breathing room below everything
+TEXT_SAFETY_BUFFER = 4                            # small cushion against font metric rounding
 
 
 class _IconButton(QToolButton):
@@ -117,8 +99,6 @@ class PopupWindow(QWidget):
         self.setFocusPolicy(Qt.NoFocus)
 
         self._drag_offset: QPoint | None = None
-        self._press_global_pos: QPoint | None = None
-        self._is_dragging = False
         self._shloka: Shloka | None = None
         self._meaning_open = False
         self._base_height = config.get("appearance/height")
@@ -202,59 +182,23 @@ class PopupWindow(QWidget):
     # ------------------------------------------------------------------
     # Layout — the single source of truth for both sizing and painting
     # ------------------------------------------------------------------
-    def _button_row_top(self) -> float:
-        """Fixed y-position (from the card's top) of the icon buttons —
-        anchored to the *configured* base height, never to the card's
-        current (possibly expanded) height. That's what keeps the
-        buttons from sliding down when the meaning view opens."""
-        return self._base_height - BUTTON_MARGIN - BUTTON_SIZE
-
-    @staticmethod
-    def _fit_font_size(text: str, family: str, preferred_size: int, width: float,
-                        max_height: float, min_size: int, bold: bool = False):
-        """Largest font size <= preferred_size for which `text`,
-        word-wrapped to `width`, fits within `max_height` — down to
-        min_size if it must. Returns (size, actual_height_at_that_size).
-        Never returns a size larger than preferred_size."""
-        size = max(preferred_size, min_size)
-        while True:
-            font = QFont(family, size)
-            font.setBold(bold)
-            height = QFontMetrics(font).boundingRect(
-                0, 0, int(width), 5000, Qt.TextWordWrap, text
-            ).height()
-            if height <= max_height or size <= min_size:
-                return size, height
-            size -= 1
-
     def _compute_layout(self, card_width: float, meaning_open: bool) -> dict:
         """Every measurement needed to lay out the card's text, derived
-        fresh from the current font settings and the actual shloka
-        text. Used identically by _expand_for_meaning (to decide how
-        tall the card needs to be) and by paintEvent (to decide where
-        things go), so the two can never drift apart."""
+        fresh from the current font settings and the actual shloka text.
+        Used identically by _expand_for_meaning (to decide how tall the
+        card needs to be) and by paintEvent (to decide where things go)
+        so the two can never drift apart."""
         font_family = config.get("appearance/font_family")
         base_size = config.get("appearance/font_size")
         text_width = max(card_width - 2 * CARD_PAD, 1)
-        button_row_top = self._button_row_top()
 
-        ref_h = 0
-        if self._shloka and self._shloka.reference:
-            ref_font = QFont(font_family, max(base_size - 7, 7))
-            ref_h = QFontMetrics(ref_font).height()
-
-        ref_reserved = (ref_h + GAP_SANS_TO_REF) if ref_h else 0
-        # Fixed vertical budget available for the sanskrit verse, in the
-        # (always-present) header region above the button row.
-        header_budget = max(button_row_top - CARD_PAD - ref_reserved - GAP_REF_TO_BUTTONS, 20)
-
-        sans_size = base_size
         sans_h = 0
         if self._shloka:
-            sans_size, sans_h = self._fit_font_size(
-                self._shloka.sanskrit, font_family, base_size, text_width,
-                header_budget, MIN_SANSKRIT_FONT_SIZE, bold=True,
-            )
+            sans_font = QFont(font_family, base_size)
+            sans_font.setBold(True)
+            sans_h = QFontMetrics(sans_font).boundingRect(
+                0, 0, int(text_width), 5000, Qt.TextWordWrap, self._shloka.sanskrit
+            ).height()
 
         trans_h = 0
         if meaning_open and self._shloka and self._shloka.translation:
@@ -263,13 +207,16 @@ class PopupWindow(QWidget):
                 0, 0, int(text_width), 5000, Qt.TextWordWrap, self._shloka.translation
             ).height()
 
+        ref_h = 0
+        if self._shloka and self._shloka.reference:
+            ref_font = QFont(font_family, max(base_size - 7, 7))
+            ref_h = QFontMetrics(ref_font).height()
+
         return {
             "text_width": text_width,
-            "button_row_top": button_row_top,
-            "ref_h": ref_h,
-            "sans_size": sans_size,
             "sans_h": sans_h,
             "trans_h": trans_h,
+            "ref_h": ref_h,
         }
 
     # ------------------------------------------------------------------
@@ -278,8 +225,8 @@ class PopupWindow(QWidget):
     def _expand_for_meaning(self) -> None:
         layout = self._compute_layout(self.width(), meaning_open=True)
         needed = (
-            layout["button_row_top"] + BUTTON_SIZE + GAP_BUTTONS_TO_TRANS
-            + layout["trans_h"] + TEXT_SAFETY_BUFFER + BOTTOM_PAD
+            TOP_CLEAR + layout["sans_h"] + SECTION_GAP + SEP_GAP
+            + layout["trans_h"] + TEXT_SAFETY_BUFFER + BOTTOM_PAD + layout["ref_h"]
         )
         max_h = config.get("behaviour/max_meaning_height")
         new_height = min(max(needed, self._base_height), max_h)
@@ -332,9 +279,8 @@ class PopupWindow(QWidget):
 
     def _position_buttons(self) -> None:
         x = self.width() - BUTTON_MARGIN - BUTTON_SIZE
-        y = self._button_row_top()
-        self.close_btn.move(x, int(y))
-        self.meaning_btn.move(x - BUTTON_SIZE - 6, int(y))
+        self.close_btn.move(x, BUTTON_MARGIN)
+        self.meaning_btn.move(x - BUTTON_SIZE - 6, BUTTON_MARGIN)
 
     # ------------------------------------------------------------------
     # Fade animation helpers
@@ -404,35 +350,24 @@ class PopupWindow(QWidget):
         layout = self._compute_layout(self.width(), meaning_open=self._meaning_open)
         font_family = config.get("appearance/font_family")
         base_size = config.get("appearance/font_size")
-        button_row_top = layout["button_row_top"]
 
         content_left = card_rect.left() + CARD_PAD
         content_width = layout["text_width"]
+        y = card_rect.top() + TOP_CLEAR
 
-        # --- Sanskrit verse (auto-shrunk to fit the fixed header area) ---
-        sans_font = QFont(font_family, layout["sans_size"])
+        sans_font = QFont(font_family, base_size)
         sans_font.setBold(True)
         painter.setFont(sans_font)
         painter.setPen(text_color)
-        sans_rect = QRectF(content_left, card_rect.top() + CARD_PAD, content_width,
-                            button_row_top - CARD_PAD)
+        # Height here is generous on purpose (down to the card bottom) —
+        # the text is top-aligned and naturally stops after sans_h, so
+        # extra room below is harmless; what matters is text_width for
+        # wrapping, which is exact.
+        sans_rect = QRectF(content_left, y, content_width, card_rect.bottom() - y)
         painter.drawText(sans_rect, Qt.AlignLeft | Qt.TextWordWrap, self._shloka.sanskrit)
+        y += layout["sans_h"] + SECTION_GAP
 
-        # --- Reference tag, right above the button row ---
-        if self._shloka.reference:
-            ref_font = QFont(font_family, max(base_size - 7, 7))
-            painter.setFont(ref_font)
-            painter.setPen(accent)
-            ref_h = layout["ref_h"]
-            painter.drawText(
-                QRectF(content_left, button_row_top - ref_h - GAP_REF_TO_BUTTONS,
-                       content_width, ref_h),
-                Qt.AlignRight, self._shloka.reference,
-            )
-
-        # --- Translation, painted below the (fixed-position) button row ---
         if self._meaning_open and self._shloka.translation:
-            y = button_row_top + BUTTON_SIZE + GAP_BUTTONS_TO_TRANS
             painter.setPen(QColor(accent).darker(105))
             painter.drawLine(int(content_left), int(y),
                               int(content_left + content_width), int(y))
@@ -441,64 +376,41 @@ class PopupWindow(QWidget):
             trans_font = QFont(font_family, max(base_size - 5, 8))
             painter.setFont(trans_font)
             painter.setPen(QColor(text_color).lighter(120))
+            # Exactly the height the sizing pass reserved (+ a tiny
+            # safety buffer) — this is what used to be shorter than the
+            # actual text and clip the last line.
             trans_rect = QRectF(content_left, y, content_width,
                                  layout["trans_h"] + TEXT_SAFETY_BUFFER)
             painter.drawText(trans_rect, Qt.AlignLeft | Qt.TextWordWrap,
                               self._shloka.translation)
 
+        if self._shloka.reference:
+            ref_font = QFont(font_family, max(base_size - 7, 7))
+            painter.setFont(ref_font)
+            painter.setPen(accent)
+            fm = QFontMetrics(ref_font)
+            painter.drawText(
+                QRectF(content_left, card_rect.bottom() - fm.height() - 8,
+                       content_width, fm.height()),
+                Qt.AlignRight, self._shloka.reference,
+            )
+
     # ------------------------------------------------------------------
-    # Dragging + click-through (background only — clicks on the icon
-    # buttons are consumed by those child widgets before reaching here)
+    # Dragging (background only — clicks on the icon buttons are
+    # consumed by those child widgets before reaching here)
     # ------------------------------------------------------------------
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self._press_global_pos = event.globalPosition().toPoint()
-            self._drag_offset = self._press_global_pos - self.pos()
-            self._is_dragging = False
+            self._drag_offset = event.globalPosition().toPoint() - self.pos()
 
     def mouseMoveEvent(self, event):
         if self._drag_offset is not None and event.buttons() & Qt.LeftButton:
-            current = event.globalPosition().toPoint()
-            if not self._is_dragging:
-                if (current - self._press_global_pos).manhattanLength() < DRAG_THRESHOLD_PX:
-                    return  # still within click tolerance — not a drag yet
-                self._is_dragging = True
-            self.move(current - self._drag_offset)
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
 
     def mouseReleaseEvent(self, event):
-        if event.button() != Qt.LeftButton:
-            return
-        was_dragging = self._is_dragging
-        press_pos = self._press_global_pos
-        self._drag_offset = None
-        self._is_dragging = False
-        self._press_global_pos = None
-
-        if was_dragging:
-            # A real drag always wins, click-through setting or not.
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = None
             self._save_position()
-        elif config.get("behaviour/click_through") and press_pos is not None:
-            self._replay_click_below(press_pos)
-
-    def _replay_click_below(self, global_pos: QPoint) -> None:
-        """A genuine click (no drag) with click-through enabled: pass
-        it through to whatever's actually underneath the popup, by
-        briefly hiding the card and synthesizing a left click at the
-        same screen position. Windows-only for now — on other
-        platforms the click is simply absorbed, same as before."""
-        if sys.platform != "win32":
-            return
-        was_visible = self.isVisible()
-        self.hide()
-        QApplication.processEvents()
-        user32 = ctypes.windll.user32
-        user32.SetCursorPos(global_pos.x(), global_pos.y())
-        MOUSEEVENTF_LEFTDOWN = 0x0002
-        MOUSEEVENTF_LEFTUP = 0x0004
-        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-        if was_visible:
-            self.show()
 
     def wheelEvent(self, event):
         if self._meaning_open:

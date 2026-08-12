@@ -23,10 +23,28 @@ disagreed by ~10-20px, which clipped the last line of the translation.
 Routing both through one function makes that class of bug impossible —
 whatever height is reserved is exactly the height that's painted into,
 at any font size.
+
+The icon buttons sit at a fixed y derived from the *configured* base
+height (appearance/height), not from the card's current (possibly
+expanded) height — so they stay put when the meaning view opens; the
+translation is painted into the newly-added space *below* them instead.
+
+Click-through note: with behaviour/click_through enabled, a plain
+click (press+release with no real movement) on the card's background
+is replayed onto whatever's underneath instead of being swallowed —
+done by very briefly hiding the popup and synthesizing the click via
+the Windows API (Windows-only for now). An actual drag (press+move
+past a small threshold) is always handled directly by this widget and
+never passed through, regardless of the setting, so the card stays
+movable either way. Clicks on the icon buttons are unaffected either
+way, since they're separate child widgets that consume their own
+events before this logic ever runs.
 """
 
 from __future__ import annotations
-from PySide6.QtWidgets import QWidget, QToolButton
+import ctypes
+import sys
+from PySide6.QtWidgets import QWidget, QToolButton, QApplication
 from PySide6.QtCore import Qt, QPoint, QRectF, QPropertyAnimation, QEasingCurve, Signal, QSize
 from PySide6.QtGui import QPainter, QColor, QPainterPath, QFont, QFontMetrics
 
@@ -37,11 +55,12 @@ BUTTON_SIZE = 28
 BUTTON_MARGIN = 10
 
 CARD_PAD = 22                                    # inner padding on all sides
-TOP_CLEAR = BUTTON_SIZE + BUTTON_MARGIN + 6       # room reserved for the icon buttons
-SECTION_GAP = 12                                  # gap: sanskrit -> separator
+GAP_REF_TO_BUTTONS = 6                            # gap: reference tag -> button row
+GAP_BUTTONS_TO_TRANS = 12                         # gap: button row -> translation (expanded only)
 SEP_GAP = 10                                      # gap: separator -> translation
 BOTTOM_PAD = 16                                   # breathing room below everything
 TEXT_SAFETY_BUFFER = 4                            # small cushion against font metric rounding
+DRAG_THRESHOLD_PX = 4                             # movement beyond this counts as a drag, not a click
 
 
 class _IconButton(QToolButton):
@@ -99,6 +118,8 @@ class PopupWindow(QWidget):
         self.setFocusPolicy(Qt.NoFocus)
 
         self._drag_offset: QPoint | None = None
+        self._press_global_pos: QPoint | None = None
+        self._is_dragging = False
         self._shloka: Shloka | None = None
         self._meaning_open = False
         self._base_height = config.get("appearance/height")
@@ -182,6 +203,13 @@ class PopupWindow(QWidget):
     # ------------------------------------------------------------------
     # Layout — the single source of truth for both sizing and painting
     # ------------------------------------------------------------------
+    def _button_row_top(self) -> float:
+        """Fixed y-position (from the card's top) of the icon buttons —
+        anchored to the *configured* base height, never to the card's
+        current (possibly expanded) height. That's what keeps the
+        buttons from sliding down when the meaning view opens."""
+        return self._base_height - BUTTON_MARGIN - BUTTON_SIZE
+
     def _compute_layout(self, card_width: float, meaning_open: bool) -> dict:
         """Every measurement needed to lay out the card's text, derived
         fresh from the current font settings and the actual shloka text.
@@ -225,8 +253,8 @@ class PopupWindow(QWidget):
     def _expand_for_meaning(self) -> None:
         layout = self._compute_layout(self.width(), meaning_open=True)
         needed = (
-            TOP_CLEAR + layout["sans_h"] + SECTION_GAP + SEP_GAP
-            + layout["trans_h"] + TEXT_SAFETY_BUFFER + BOTTOM_PAD + layout["ref_h"]
+            self._button_row_top() + BUTTON_SIZE + GAP_BUTTONS_TO_TRANS
+            + layout["trans_h"] + TEXT_SAFETY_BUFFER + BOTTOM_PAD
         )
         max_h = config.get("behaviour/max_meaning_height")
         new_height = min(max(needed, self._base_height), max_h)
@@ -279,8 +307,9 @@ class PopupWindow(QWidget):
 
     def _position_buttons(self) -> None:
         x = self.width() - BUTTON_MARGIN - BUTTON_SIZE
-        self.close_btn.move(x, BUTTON_MARGIN)
-        self.meaning_btn.move(x - BUTTON_SIZE - 6, BUTTON_MARGIN)
+        y = int(self._button_row_top())
+        self.close_btn.move(x, y)
+        self.meaning_btn.move(x - BUTTON_SIZE - 6, y)
 
     # ------------------------------------------------------------------
     # Fade animation helpers
@@ -350,24 +379,36 @@ class PopupWindow(QWidget):
         layout = self._compute_layout(self.width(), meaning_open=self._meaning_open)
         font_family = config.get("appearance/font_family")
         base_size = config.get("appearance/font_size")
+        button_row_top = self._button_row_top()
 
         content_left = card_rect.left() + CARD_PAD
         content_width = layout["text_width"]
-        y = card_rect.top() + TOP_CLEAR
 
+        # --- Sanskrit verse, top-aligned ---
         sans_font = QFont(font_family, base_size)
         sans_font.setBold(True)
         painter.setFont(sans_font)
         painter.setPen(text_color)
-        # Height here is generous on purpose (down to the card bottom) —
-        # the text is top-aligned and naturally stops after sans_h, so
-        # extra room below is harmless; what matters is text_width for
-        # wrapping, which is exact.
-        sans_rect = QRectF(content_left, y, content_width, card_rect.bottom() - y)
+        sans_top = card_rect.top() + CARD_PAD
+        sans_rect = QRectF(content_left, sans_top, content_width,
+                            max(button_row_top - sans_top, 0))
         painter.drawText(sans_rect, Qt.AlignLeft | Qt.TextWordWrap, self._shloka.sanskrit)
-        y += layout["sans_h"] + SECTION_GAP
 
+        # --- Reference tag, right above the (fixed) button row ---
+        if self._shloka.reference:
+            ref_font = QFont(font_family, max(base_size - 7, 7))
+            painter.setFont(ref_font)
+            painter.setPen(accent)
+            ref_h = layout["ref_h"]
+            painter.drawText(
+                QRectF(content_left, button_row_top - ref_h - GAP_REF_TO_BUTTONS,
+                       content_width, ref_h),
+                Qt.AlignRight, self._shloka.reference,
+            )
+
+        # --- Translation, painted below the button row ---
         if self._meaning_open and self._shloka.translation:
+            y = button_row_top + BUTTON_SIZE + GAP_BUTTONS_TO_TRANS
             painter.setPen(QColor(accent).darker(105))
             painter.drawLine(int(content_left), int(y),
                               int(content_left + content_width), int(y))
@@ -384,33 +425,59 @@ class PopupWindow(QWidget):
             painter.drawText(trans_rect, Qt.AlignLeft | Qt.TextWordWrap,
                               self._shloka.translation)
 
-        if self._shloka.reference:
-            ref_font = QFont(font_family, max(base_size - 7, 7))
-            painter.setFont(ref_font)
-            painter.setPen(accent)
-            fm = QFontMetrics(ref_font)
-            painter.drawText(
-                QRectF(content_left, card_rect.bottom() - fm.height() - 8,
-                       content_width, fm.height()),
-                Qt.AlignRight, self._shloka.reference,
-            )
-
     # ------------------------------------------------------------------
-    # Dragging (background only — clicks on the icon buttons are
-    # consumed by those child widgets before reaching here)
+    # Dragging + click-through (background only — clicks on the icon
+    # buttons are consumed by those child widgets before reaching here)
     # ------------------------------------------------------------------
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self._drag_offset = event.globalPosition().toPoint() - self.pos()
+            self._press_global_pos = event.globalPosition().toPoint()
+            self._drag_offset = self._press_global_pos - self.pos()
+            self._is_dragging = False
 
     def mouseMoveEvent(self, event):
         if self._drag_offset is not None and event.buttons() & Qt.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            current = event.globalPosition().toPoint()
+            if not self._is_dragging:
+                if (current - self._press_global_pos).manhattanLength() < DRAG_THRESHOLD_PX:
+                    return  # still within click tolerance — not a drag yet
+                self._is_dragging = True
+            self.move(current - self._drag_offset)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._drag_offset = None
+        if event.button() != Qt.LeftButton:
+            return
+        was_dragging = self._is_dragging
+        press_pos = self._press_global_pos
+        self._drag_offset = None
+        self._is_dragging = False
+        self._press_global_pos = None
+
+        if was_dragging:
+            # A real drag always wins, click-through setting or not.
             self._save_position()
+        elif config.get("behaviour/click_through") and press_pos is not None:
+            self._replay_click_below(press_pos)
+
+    def _replay_click_below(self, global_pos: QPoint) -> None:
+        """A genuine click (no drag) with click-through enabled: pass
+        it through to whatever's actually underneath the popup, by
+        briefly hiding the card and synthesizing a left click at the
+        same screen position. Windows-only for now — on other
+        platforms the click is simply absorbed, same as before."""
+        if sys.platform != "win32":
+            return
+        was_visible = self.isVisible()
+        self.hide()
+        QApplication.processEvents()
+        user32 = ctypes.windll.user32
+        user32.SetCursorPos(global_pos.x(), global_pos.y())
+        MOUSEEVENTF_LEFTDOWN = 0x0002
+        MOUSEEVENTF_LEFTUP = 0x0004
+        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        if was_visible:
+            self.show()
 
     def wheelEvent(self, event):
         if self._meaning_open:

@@ -25,6 +25,11 @@ class ColorButton(QPushButton):
     def __init__(self, key: str, parent=None):
         super().__init__(parent)
         self._key = key
+        # Scoped with an objectName selector rather than an unqualified
+        # rule, so this swatch's color can never bleed into any other
+        # widget in the dialog under the Qt stylesheet cascade — only
+        # this exact button matches "QPushButton#colorSwatch".
+        self.setObjectName("colorSwatch")
         self.setFixedSize(60, 24)
         self.clicked.connect(self._pick)
         self._refresh()
@@ -32,7 +37,9 @@ class ColorButton(QPushButton):
     def _refresh(self):
         color = config.get(self._key)
         self.setStyleSheet(
+            f"QPushButton#colorSwatch {{"
             f"background-color: {color}; border: 1px solid #555; border-radius: 4px;"
+            f"}}"
         )
 
     def _pick(self):

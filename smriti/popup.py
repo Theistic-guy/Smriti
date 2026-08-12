@@ -2,19 +2,21 @@
 popup.py — The floating shloka card.
 
 Default view shows only the Sanskrit verse and its reference tag.
-Three small icon-only buttons sit in the top-right corner:
-  - a "▾" (show more) button that grows the card a little, purely for
-    this run of the app, so a verse whose Sanskrit is getting clipped
-    can be read in full. Never written to config — it quietly resets
-    to nothing the next time the process starts.
-  - an "i" (meaning) button that reveals the translation in place,
-    expanding the card's height to fit it. While the meaning is open,
-    the auto-hide timer is paused (via meaning_toggled signal) so a
-    long translation is never cut off mid-read.
-  - a "×" (close) button that dismisses the popup immediately.
+The button row is two docked groups:
+  - Left: "▼" / "▲" (show more / show less) — nudge the card's height
+    up or down a little, purely for this run of the app, so a verse
+    whose Sanskrit is getting clipped can be read in full. Never
+    written to config — it quietly resets to nothing the next time the
+    process starts.
+  - Right: "i" (meaning) and "×" (close). "×" is deliberately wider
+    than the others so it's easy to hit without carefully aiming.
+    Meaning reveals the translation in place, expanding the card's
+    height to fit it — while it's open, the auto-hide timer is paused
+    (via meaning_toggled signal) so a long translation is never cut
+    off mid-read.
 
-All three are QToolButtons with NoFocus policy and autoRaise styling,
-so none can trigger a platform "beep" (which normally comes from a
+All are QToolButtons with NoFocus policy and autoRaise styling, so
+none can trigger a platform "beep" (which normally comes from a
 button reacting to Enter/Return as an implicit default action — these
 buttons are never focusable, so that can't happen) and none steals
 keyboard focus from whatever the user was doing.
@@ -28,21 +30,24 @@ Routing both through one function makes that class of bug impossible —
 whatever height is reserved is exactly the height that's painted into,
 at any font size.
 
-The icon buttons sit at a fixed y derived from the *configured* base
-height (appearance/height), not from the card's current (possibly
-expanded) height — so they stay put when the meaning view opens; the
-translation is painted into the newly-added space *below* them instead.
+The icon buttons sit at a fixed y derived from the *effective* base
+height (configured appearance/height plus any session-only show-more
+bump), not from the card's current (possibly meaning-expanded) height
+— so they stay put when the meaning view opens; the translation is
+painted into the newly-added space *below* them instead.
 
 Click-through note: with behaviour/click_through enabled, a plain
 click (press+release with no real movement) on the card's background
 is replayed onto whatever's underneath instead of being swallowed —
-done by very briefly hiding the popup and synthesizing the click via
-the Windows API (Windows-only for now). An actual drag (press+move
-past a small threshold) is always handled directly by this widget and
-never passed through, regardless of the setting, so the card stays
-movable either way. Clicks on the icon buttons are unaffected either
-way, since they're separate child widgets that consume their own
-events before this logic ever runs.
+for every mouse button (left/right/middle) and for wheel scroll alike
+— done by very briefly hiding the popup and synthesizing the input via
+the Windows API (Windows-only for now). An actual left-button drag
+(press+move past a small threshold) is always handled directly by
+this widget and never passed through, regardless of the setting, so
+the card stays movable either way — right/middle clicks can't drag it,
+so those pass through unconditionally on release. Clicks on the icon
+buttons are unaffected either way, since they're separate child
+widgets that consume their own events before this logic ever runs.
 """
 
 from __future__ import annotations
@@ -75,32 +80,46 @@ MAX_SESSION_EXTRA_HEIGHT = 320                    # cap on the in-memory-only gr
 
 
 class _IconButton(QToolButton):
-    """Small circular, icon-only, flat button that never takes focus
-    or plays a system sound when clicked."""
+    """Small icon-only, flat button that never takes focus or plays a
+    system sound when clicked. Square/circular by default, but width,
+    corner radius and glyph size can all be overridden — used for the
+    up/down arrows (bigger glyph) and the close button (elongated, for
+    a more forgiving hit target)."""
 
-    def __init__(self, glyph: str, tooltip: str, parent=None):
+    def __init__(
+        self,
+        glyph: str,
+        tooltip: str,
+        parent=None,
+        width: int = BUTTON_SIZE,
+        height: int = BUTTON_SIZE,
+        font_size: int = 13,
+        border_radius: int | None = None,
+    ):
         super().__init__(parent)
         self.setText(glyph)
         self.setToolTip(tooltip)
-        self.setFixedSize(BUTTON_SIZE, BUTTON_SIZE)
+        self.setFixedSize(width, height)
         self.setFocusPolicy(Qt.NoFocus)
         self.setCursor(Qt.PointingHandCursor)
         self.setAutoRaise(True)
+        self._border_radius = border_radius if border_radius is not None else height // 2
+        self._font_size = font_size
         self.setStyleSheet(self._style())
 
     def set_active(self, active: bool):
         self.setStyleSheet(self._style(active))
 
-    @staticmethod
-    def _style(active: bool = False) -> str:
+    def _style(self, active: bool = False) -> str:
         bg = "rgba(201,161,90,0.28)" if active else "rgba(255,255,255,0.08)"
         return f"""
             QToolButton {{
                 background: {bg};
                 color: #f2ede3;
                 border: none;
-                border-radius: {BUTTON_SIZE // 2}px;
-                font-size: 13px;
+                border-radius: {self._border_radius}px;
+                font-size: {self._font_size}px;
+                font-weight: bold;
             }}
             QToolButton:hover {{
                 background: rgba(201,161,90,0.35);
@@ -109,6 +128,11 @@ class _IconButton(QToolButton):
                 background: rgba(201,161,90,0.5);
             }}
         """
+
+
+CLOSE_BUTTON_WIDTH = 46                           # elongated so it's easy to hit without careful aiming
+ARROW_FONT_SIZE = 16                              # bigger glyph than the default 13px — small triangles
+                                                   # at 13px read as an unrecognisable smudge ("d"-ish blob)
 
 
 class PopupWindow(QWidget):
@@ -153,14 +177,26 @@ class PopupWindow(QWidget):
         self._resize_anim.setEasingCurve(QEasingCurve.InOutQuad)
         self._resize_anim.setDuration(220)
 
-        self.close_btn = _IconButton("\u2715", "Close", self)   # ✕
+        # Right-docked group: close (elongated hit target) + meaning.
+        self.close_btn = _IconButton(
+            "\u2715", "Close", self,
+            width=CLOSE_BUTTON_WIDTH, border_radius=BUTTON_SIZE // 2,
+        )   # ✕
         self.close_btn.clicked.connect(lambda: self.dismiss())
 
         self.meaning_btn = _IconButton("\u24d8", "Show meaning", self)  # ⓘ
         self.meaning_btn.clicked.connect(self.toggle_meaning)
 
-        self.expand_btn = _IconButton("\u25be", "Show more (this session only)", self)  # ▾
+        # Left-docked group: grow/shrink the text area, session-only.
+        self.expand_btn = _IconButton(
+            "\u25bc", "Show more (this session only)", self, font_size=ARROW_FONT_SIZE
+        )  # ▼
         self.expand_btn.clicked.connect(self._expand_text_area)
+
+        self.shrink_btn = _IconButton(
+            "\u25b2", "Show less (this session only)", self, font_size=ARROW_FONT_SIZE
+        )  # ▲
+        self.shrink_btn.clicked.connect(self._shrink_text_area)
 
         self._apply_geometry_from_config()
         self._restore_position()
@@ -311,6 +347,18 @@ class PopupWindow(QWidget):
         else:
             self._animate_resize(self._effective_base_height())
 
+    def _shrink_text_area(self) -> None:
+        """Mirror of _expand_text_area — undoes a previous session-only
+        grow, one EXPAND_STEP_PX at a time, down to (but never below)
+        the configured appearance/height."""
+        if self._session_extra_height <= 0:
+            return
+        self._session_extra_height = max(self._session_extra_height - EXPAND_STEP_PX, 0)
+        if self._meaning_open:
+            self._expand_for_meaning()
+        else:
+            self._animate_resize(self._effective_base_height())
+
     def _animate_resize(self, new_height: float) -> None:
         self._resize_anim.stop()
         self._resize_anim.setStartValue(self.size())
@@ -354,11 +402,17 @@ class PopupWindow(QWidget):
         self._position_buttons()
 
     def _position_buttons(self) -> None:
-        x = self.width() - BUTTON_MARGIN - BUTTON_SIZE
         y = int(self._button_row_top())
-        self.close_btn.move(x, y)
-        self.meaning_btn.move(x - BUTTON_SIZE - 6, y)
-        self.expand_btn.move(x - 2 * (BUTTON_SIZE + 6), y)
+
+        # Right-docked group: close, then meaning to its left.
+        right_x = self.width() - BUTTON_MARGIN - CLOSE_BUTTON_WIDTH
+        self.close_btn.move(right_x, y)
+        self.meaning_btn.move(right_x - BUTTON_SIZE - 6, y)
+
+        # Left-docked group: down-arrow, then up-arrow to its right.
+        left_x = BUTTON_MARGIN
+        self.expand_btn.move(left_x, y)
+        self.shrink_btn.move(left_x + BUTTON_SIZE + 6, y)
 
     # ------------------------------------------------------------------
     # Fade animation helpers
@@ -477,6 +531,15 @@ class PopupWindow(QWidget):
     # ------------------------------------------------------------------
     # Dragging + click-through (background only — clicks on the icon
     # buttons are consumed by those child widgets before reaching here)
+    #
+    # With behaviour/click_through enabled, EVERY mouse interaction with
+    # the card's background — left/right/middle clicks and wheel scroll
+    # alike — is meant to pass through to whatever's underneath, the one
+    # exception being an actual left-button drag (which always moves the
+    # card, click-through or not, so it stays movable). Right-click and
+    # middle-click can't drag the window, so they're replayed unconditionally
+    # on release; only the left button needs the press/move/release dance
+    # to tell a click apart from a drag.
     # ------------------------------------------------------------------
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -494,32 +557,54 @@ class PopupWindow(QWidget):
             self.move(current - self._drag_offset)
 
     def mouseReleaseEvent(self, event):
-        if event.button() != Qt.LeftButton:
-            return
-        was_dragging = self._is_dragging
-        press_pos = self._press_global_pos
-        self._drag_offset = None
-        self._is_dragging = False
-        self._press_global_pos = None
+        if event.button() == Qt.LeftButton:
+            was_dragging = self._is_dragging
+            press_pos = self._press_global_pos
+            self._drag_offset = None
+            self._is_dragging = False
+            self._press_global_pos = None
 
-        if was_dragging:
-            # A real drag always wins, click-through setting or not.
-            self._save_position()
-        elif config.get("behaviour/click_through") and press_pos is not None:
-            self._replay_click_below(press_pos)
+            if was_dragging:
+                # A real drag always wins, click-through setting or not.
+                self._save_position()
+            elif config.get("behaviour/click_through") and press_pos is not None:
+                self._replay_click_below(press_pos, event.button())
+        elif event.button() in (Qt.RightButton, Qt.MiddleButton):
+            # Neither button can drag the card, so there's no click-vs-drag
+            # decision to make — just pass it straight through if enabled.
+            if config.get("behaviour/click_through"):
+                self._replay_click_below(event.globalPosition().toPoint(), event.button())
 
-    def _replay_click_below(self, global_pos: QPoint) -> None:
+    def wheelEvent(self, event):
+        # No more scroll-to-switch-shloka here (that used to fight with
+        # click-through — see module docstring). With click-through on,
+        # forward the scroll to whatever's underneath; with it off, the
+        # scroll is simply swallowed, same as a click would be.
+        if config.get("behaviour/click_through"):
+            self._replay_wheel_below(event.globalPosition().toPoint(), event.angleDelta().y())
+
+    _MOUSE_EVENT_FLAGS = {
+        Qt.LeftButton: (0x0002, 0x0004),      # MOUSEEVENTF_LEFTDOWN / LEFTUP
+        Qt.RightButton: (0x0008, 0x0010),     # MOUSEEVENTF_RIGHTDOWN / RIGHTUP
+        Qt.MiddleButton: (0x0020, 0x0040),    # MOUSEEVENTF_MIDDLEDOWN / MIDDLEUP
+    }
+    MOUSEEVENTF_WHEEL = 0x0800
+
+    def _replay_click_below(self, global_pos: QPoint, button=Qt.LeftButton) -> None:
         """A genuine click (no drag) with click-through enabled: pass
         it through to whatever's actually underneath the popup, by
-        briefly hiding the card and synthesizing a left click at the
-        same screen position. Windows-only for now — on other
-        platforms the click is simply absorbed, same as before.
+        briefly hiding the card and synthesizing the same button's
+        click at the same screen position. Windows-only for now — on
+        other platforms the click is simply absorbed, same as before.
 
-        Two things used to make this misfire intermittently:
+        Two things used to make this misfire intermittently for the
+        left button (and would have affected right/middle too):
         1. DRAG_THRESHOLD_PX was 4px — smaller than ordinary hand
            tremor during a click, so a good fraction of genuine clicks
            were misclassified as drags and never reached this method
-           at all (fixed above by loosening the threshold).
+           at all (fixed above by loosening the threshold — though
+           this only ever applied to the left button; right/middle
+           never went through the drag check to begin with).
         2. The hide -> synthesize-click -> show sequence ran entirely
            synchronously inside the mouse event handler, with a single
            QApplication.processEvents() call to "flush" the hide. That
@@ -538,23 +623,38 @@ class PopupWindow(QWidget):
         self._click_through_pending = True
         was_visible = self.isVisible()
         self.hide()
-        QTimer.singleShot(0, lambda: self._do_replay_click(global_pos, was_visible))
+        QTimer.singleShot(0, lambda: self._do_replay_click(global_pos, was_visible, button))
 
-    def _do_replay_click(self, global_pos: QPoint, was_visible: bool) -> None:
+    def _do_replay_click(self, global_pos: QPoint, was_visible: bool, button) -> None:
         user32 = ctypes.windll.user32
         user32.SetCursorPos(global_pos.x(), global_pos.y())
-        MOUSEEVENTF_LEFTDOWN = 0x0002
-        MOUSEEVENTF_LEFTUP = 0x0004
-        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        down_flag, up_flag = self._MOUSE_EVENT_FLAGS.get(
+            button, self._MOUSE_EVENT_FLAGS[Qt.LeftButton]
+        )
+        user32.mouse_event(down_flag, 0, 0, 0, 0)
+        user32.mouse_event(up_flag, 0, 0, 0, 0)
         if was_visible:
             self.show()
         self._click_through_pending = False
 
-    # Deliberately no wheelEvent / mouseDoubleClickEvent overrides here.
-    # This card used to switch shlokas on scroll or double-click, which
-    # fought with click-through: any incidental scroll or double-click
-    # over the popup — even one meant for whatever's underneath — would
-    # get consumed and silently advance the cycle instead of passing
-    # through. Leaving these unimplemented means Qt's default (a no-op)
-    # applies: the event is neither acted on nor forwarded anywhere.
+    def _replay_wheel_below(self, global_pos: QPoint, delta: int) -> None:
+        """Same idea as _replay_click_below, but for a wheel notch.
+        angleDelta().y() already comes out in the same units Windows
+        expects for MOUSEEVENTF_WHEEL (multiples of 120 per notch), so
+        it's passed straight through."""
+        if sys.platform != "win32" or delta == 0:
+            return
+        if self._click_through_pending:
+            return
+        self._click_through_pending = True
+        was_visible = self.isVisible()
+        self.hide()
+        QTimer.singleShot(0, lambda: self._do_replay_wheel(global_pos, was_visible, delta))
+
+    def _do_replay_wheel(self, global_pos: QPoint, was_visible: bool, delta: int) -> None:
+        user32 = ctypes.windll.user32
+        user32.SetCursorPos(global_pos.x(), global_pos.y())
+        user32.mouse_event(self.MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
+        if was_visible:
+            self.show()
+        self._click_through_pending = False

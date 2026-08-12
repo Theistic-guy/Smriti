@@ -2,17 +2,21 @@
 popup.py — The floating shloka card.
 
 Default view shows only the Sanskrit verse and its reference tag.
-Two small icon-only buttons sit in the top-right corner:
+Three small icon-only buttons sit in the top-right corner:
+  - a "▾" (show more) button that grows the card a little, purely for
+    this run of the app, so a verse whose Sanskrit is getting clipped
+    can be read in full. Never written to config — it quietly resets
+    to nothing the next time the process starts.
   - an "i" (meaning) button that reveals the translation in place,
     expanding the card's height to fit it. While the meaning is open,
     the auto-hide timer is paused (via meaning_toggled signal) so a
     long translation is never cut off mid-read.
   - a "×" (close) button that dismisses the popup immediately.
 
-Both are QToolButtons with NoFocus policy and autoRaise styling, so
-neither can trigger a platform "beep" (which normally comes from a
+All three are QToolButtons with NoFocus policy and autoRaise styling,
+so none can trigger a platform "beep" (which normally comes from a
 button reacting to Enter/Return as an implicit default action — these
-buttons are never focusable, so that can't happen) and neither steals
+buttons are never focusable, so that can't happen) and none steals
 keyboard focus from whatever the user was doing.
 
 Layout note: how tall the card must grow to fit the translation
@@ -45,7 +49,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from PySide6.QtWidgets import QWidget, QToolButton, QApplication
-from PySide6.QtCore import Qt, QPoint, QRectF, QPropertyAnimation, QEasingCurve, Signal, QSize
+from PySide6.QtCore import Qt, QPoint, QRectF, QPropertyAnimation, QEasingCurve, Signal, QSize, QTimer
 from PySide6.QtGui import QPainter, QColor, QPainterPath, QFont, QFontMetrics
 
 from .config import config
@@ -60,7 +64,14 @@ GAP_BUTTONS_TO_TRANS = 12                         # gap: button row -> translati
 SEP_GAP = 10                                      # gap: separator -> translation
 BOTTOM_PAD = 16                                   # breathing room below everything
 TEXT_SAFETY_BUFFER = 4                            # small cushion against font metric rounding
-DRAG_THRESHOLD_PX = 4                             # movement beyond this counts as a drag, not a click
+DRAG_THRESHOLD_PX = 8                             # movement beyond this counts as a drag, not a click
+                                                   # (was 4 — too tight; ordinary hand tremor during
+                                                   # a click regularly exceeds a few px, which was
+                                                   # silently misfiring as a drag and swallowing the
+                                                   # click instead of passing it through)
+
+EXPAND_STEP_PX = 40                               # how much the "show more" button grows the card by, per click
+MAX_SESSION_EXTRA_HEIGHT = 320                    # cap on the in-memory-only growth from that button
 
 
 class _IconButton(QToolButton):
@@ -120,9 +131,15 @@ class PopupWindow(QWidget):
         self._drag_offset: QPoint | None = None
         self._press_global_pos: QPoint | None = None
         self._is_dragging = False
+        self._click_through_pending = False
         self._shloka: Shloka | None = None
         self._meaning_open = False
         self._base_height = config.get("appearance/height")
+        # In-memory-only bump from the "show more" button. Never touches
+        # config, so it quietly resets to 0 the moment the process
+        # restarts — it only exists to survive across popups within a
+        # single run, for exactly as long as the app keeps running.
+        self._session_extra_height = 0
 
         self._fade_anim = QPropertyAnimation(self, b"windowOpacity")
         self._fade_anim.setEasingCurve(QEasingCurve.InOutQuad)
@@ -142,6 +159,9 @@ class PopupWindow(QWidget):
         self.meaning_btn = _IconButton("\u24d8", "Show meaning", self)  # ⓘ
         self.meaning_btn.clicked.connect(self.toggle_meaning)
 
+        self.expand_btn = _IconButton("\u25be", "Show more (this session only)", self)  # ▾
+        self.expand_btn.clicked.connect(self._expand_text_area)
+
         self._apply_geometry_from_config()
         self._restore_position()
         self._position_buttons()
@@ -154,7 +174,7 @@ class PopupWindow(QWidget):
         self._meaning_open = False
         self.meaning_btn.set_active(False)
         self._base_height = config.get("appearance/height")
-        self.resize(config.get("appearance/width"), self._base_height)
+        self.resize(config.get("appearance/width"), self._effective_base_height())
         self._restore_position()
         self._position_buttons()
         self.update()
@@ -186,7 +206,7 @@ class PopupWindow(QWidget):
         if self._meaning_open:
             self.resize(new_width, self.height())
         else:
-            self.resize(new_width, self._base_height)
+            self.resize(new_width, self._effective_base_height())
         self._position_buttons()
         self.update()
 
@@ -203,12 +223,24 @@ class PopupWindow(QWidget):
     # ------------------------------------------------------------------
     # Layout — the single source of truth for both sizing and painting
     # ------------------------------------------------------------------
+    def _effective_base_height(self) -> int:
+        """The configured base height, plus whatever the 'show more'
+        button has added this session. This — not the raw config
+        value — is what the card collapses back to and what the
+        button row is anchored against, so an expand sticks around
+        across popups until the app restarts, without ever being
+        written to config."""
+        return self._base_height + self._session_extra_height
+
     def _button_row_top(self) -> float:
         """Fixed y-position (from the card's top) of the icon buttons —
-        anchored to the *configured* base height, never to the card's
-        current (possibly expanded) height. That's what keeps the
-        buttons from sliding down when the meaning view opens."""
-        return self._base_height - BUTTON_MARGIN - BUTTON_SIZE
+        anchored to the *effective* base height (configured height plus
+        any session-only expand), never to the card's current (possibly
+        meaning-expanded) height. That's what keeps the buttons from
+        sliding down when the meaning view opens, while still moving
+        down — giving the Sanskrit text more room above them — when the
+        user presses the expand button."""
+        return self._effective_base_height() - BUTTON_MARGIN - BUTTON_SIZE
 
     def _compute_layout(self, card_width: float, meaning_open: bool) -> dict:
         """Every measurement needed to lay out the card's text, derived
@@ -261,7 +293,23 @@ class PopupWindow(QWidget):
         self._animate_resize(new_height)
 
     def _collapse_from_meaning(self) -> None:
-        self._animate_resize(self._base_height)
+        self._animate_resize(self._effective_base_height())
+
+    def _expand_text_area(self) -> None:
+        """Grow the card by EXPAND_STEP_PX so clipped Sanskrit text has
+        room to breathe — session-only, never written to config, and
+        capped so repeated clicks can't run the card off-screen. If the
+        meaning view happens to be open, re-run that sizing pass instead
+        so the two never fight over the card's height."""
+        if self._session_extra_height >= MAX_SESSION_EXTRA_HEIGHT:
+            return
+        self._session_extra_height = min(
+            self._session_extra_height + EXPAND_STEP_PX, MAX_SESSION_EXTRA_HEIGHT
+        )
+        if self._meaning_open:
+            self._expand_for_meaning()
+        else:
+            self._animate_resize(self._effective_base_height())
 
     def _animate_resize(self, new_height: float) -> None:
         self._resize_anim.stop()
@@ -310,6 +358,7 @@ class PopupWindow(QWidget):
         y = int(self._button_row_top())
         self.close_btn.move(x, y)
         self.meaning_btn.move(x - BUTTON_SIZE - 6, y)
+        self.expand_btn.move(x - 2 * (BUTTON_SIZE + 6), y)
 
     # ------------------------------------------------------------------
     # Fade animation helpers
@@ -464,12 +513,34 @@ class PopupWindow(QWidget):
         it through to whatever's actually underneath the popup, by
         briefly hiding the card and synthesizing a left click at the
         same screen position. Windows-only for now — on other
-        platforms the click is simply absorbed, same as before."""
+        platforms the click is simply absorbed, same as before.
+
+        Two things used to make this misfire intermittently:
+        1. DRAG_THRESHOLD_PX was 4px — smaller than ordinary hand
+           tremor during a click, so a good fraction of genuine clicks
+           were misclassified as drags and never reached this method
+           at all (fixed above by loosening the threshold).
+        2. The hide -> synthesize-click -> show sequence ran entirely
+           synchronously inside the mouse event handler, with a single
+           QApplication.processEvents() call to "flush" the hide. That
+           doesn't reliably guarantee the OS/compositor has finished
+           un-mapping the window before the synthetic click fires, so
+           the click could occasionally still land on this popup
+           instead of the window beneath it. Deferring the actual
+           synthesis to the next event-loop iteration via
+           QTimer.singleShot gives Qt's own loop — rather than a
+           manual processEvents() call — the chance to finish the hide
+           first, which is a more reliable ordering guarantee."""
         if sys.platform != "win32":
             return
+        if self._click_through_pending:
+            return  # a previous replay hasn't finished yet — don't overlap
+        self._click_through_pending = True
         was_visible = self.isVisible()
         self.hide()
-        QApplication.processEvents()
+        QTimer.singleShot(0, lambda: self._do_replay_click(global_pos, was_visible))
+
+    def _do_replay_click(self, global_pos: QPoint, was_visible: bool) -> None:
         user32 = ctypes.windll.user32
         user32.SetCursorPos(global_pos.x(), global_pos.y())
         MOUSEEVENTF_LEFTDOWN = 0x0002
@@ -478,15 +549,12 @@ class PopupWindow(QWidget):
         user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
         if was_visible:
             self.show()
+        self._click_through_pending = False
 
-    def wheelEvent(self, event):
-        if self._meaning_open:
-            return  # don't switch shlokas mid-read
-        if event.angleDelta().y() > 0:
-            self.prev_requested.emit()
-        else:
-            self.next_requested.emit()
-
-    def mouseDoubleClickEvent(self, event):
-        if not self._meaning_open:
-            self.next_requested.emit()
+    # Deliberately no wheelEvent / mouseDoubleClickEvent overrides here.
+    # This card used to switch shlokas on scroll or double-click, which
+    # fought with click-through: any incidental scroll or double-click
+    # over the popup — even one meant for whatever's underneath — would
+    # get consumed and silently advance the cycle instead of passing
+    # through. Leaving these unimplemented means Qt's default (a no-op)
+    # applies: the event is neither acted on nor forwarded anywhere.

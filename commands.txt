@@ -1,0 +1,1 @@
+nuitka --standalone --enable-plugin=pyside6 --windows-console-mode=disable --include-data-dir=images=images --output-filename=YourAppName --windows-icon-from-ico=your_icon.ico main.py

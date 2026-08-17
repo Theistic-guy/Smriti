@@ -24,7 +24,7 @@ You will immediately see a golden lamp medallion icon appear in your system tray
 ## 🛠️ How to Use It
 
 - **System Tray Icon:** The heart of the app lives in your system tray. 
-  - **Left-click** the golden "S" icon to open the Settings dialog.
+  - **Left-click** the golden lamp icon to open the Settings dialog.
   - **Right-click** it to pause the reminders, skip to the next shloka, or quit the app.
 - **Managing your Shlokas:** If you want to add your own favorite verses, double-click on **`Shloka_manager.exe`**. This elegant tool lets you easily search, add, edit, and delete shlokas from your collection (`shlokas.csv`). It even features a Light/Dark theme toggle under the View menu!
 
@@ -34,7 +34,7 @@ Smriti is built to be customized. Open the **Settings** panel to adjust:
 - **Timing:** Choose how long the popup stays on screen, and how many seconds to wait between popups.
 - **Appearance:** Change the background opacity, accent colors, and dial in the exact font sizes for the Sanskrit verse and Translation text for maximum eye comfort.
 - **Behaviour:** Enable "Click-through" mode to pass mouse clicks & scrolls through the popup.
-- **Hotkeys:** Set a custom global keyboard shortcut (like `Ctrl+Alt+X`) to instantly dismiss a popup without using your mouse.
+- **Hotkeys:** Set a custom global keyboard shortcut (like `Ctrl+Alt+X`) to instantly dismiss a popup without using your mouse or you can enable 'quick hiding' to use Ctrl+click to hide the box.
 
 ---
 

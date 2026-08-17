@@ -9,7 +9,7 @@ if it needs a dedicated accessor, one get_x/set_x pair below.
 from __future__ import annotations
 from PySide6.QtCore import QSettings, QObject, Signal
 
-ORG_NAME = "AryamanTools"
+ORG_NAME = "Smriti"
 APP_NAME = "Smriti"
 
 # Every setting the app knows about, with its default value.

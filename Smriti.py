@@ -14,7 +14,7 @@ from smriti.app import SmritiApp
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Smriti")
-    app.setOrganizationName("AryamanTools")
+    app.setOrganizationName("Smriti")
 
     controller = SmritiApp(app)  # noqa: F841 (kept alive for the app's lifetime)
 

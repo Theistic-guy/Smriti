@@ -1,1 +1,1 @@
-nuitka --standalone --windows-icon-from-ico=smriti\smriti_icon.ico --enable-plugin=pyside6 --windows-console-mode=disable --include-data-file=shlokas.csv=shlokas.csv --include-data-file=smriti\smriti_icon.svg=smriti\smriti_icon.svg --main=Smriti.py --main="smriti\Shloka Manager.py"
+nuitka --standalone --windows-icon-from-ico=smriti\smriti_icon.ico --enable-plugin=pyside6 --windows-console-mode=disable --include-data-file=shlokas.csv=shlokas.csv --include-data-file=smriti\smriti_icon.svg=smriti\smriti_icon.svg --main=Smriti2.py --main="smriti\Shloka Manager.py"

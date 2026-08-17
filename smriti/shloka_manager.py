@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QMessageBox, QHeaderView, QAbstractItemView,
     QFileDialog
 )
-from PySide6.QtGui import QAction, QFont
+from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtCore import Qt
 
 class ShlokaManager(QMainWindow):
@@ -20,6 +20,10 @@ class ShlokaManager(QMainWindow):
 
         self.resize(1000, 800)
         
+        icon_path = os.path.join(os.path.dirname(__file__), "smriti_icon.svg")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+        
         self.create_menu()
         self.init_ui()
         self.update_title()
@@ -27,7 +31,7 @@ class ShlokaManager(QMainWindow):
         self.statusBar().showMessage("Ready")
 
     def update_title(self):
-        title = "Shloka Manager"
+        title = "Smriti — Shloka Manager"
         if self.current_file:
             file_name = os.path.basename(self.current_file)
             title += f" - {file_name}"
@@ -68,6 +72,20 @@ class ShlokaManager(QMainWindow):
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        view_menu = menubar.addMenu("View")
+        self.theme_action = QAction("Switch to Light Theme", self)
+        self.theme_action.triggered.connect(self.toggle_theme)
+        view_menu.addAction(self.theme_action)
+
+    def toggle_theme(self):
+        app = QApplication.instance()
+        if self.theme_action.text() == "Switch to Light Theme":
+            app.setStyleSheet("")
+            self.theme_action.setText("Switch to Dark Theme")
+        else:
+            app.setStyleSheet(STYLE_SHEET)
+            self.theme_action.setText("Switch to Light Theme")
 
     def init_ui(self):
         main_widget = QWidget()
@@ -420,12 +438,99 @@ class ShlokaManager(QMainWindow):
         else:
             event.ignore()
 
+STYLE_SHEET = """
+QWidget {
+    font-size: 16px;
+    background-color: #20212b;
+    color: #f2ede3;
+}
+QMainWindow, QDialog {
+    background-color: #20212b;
+}
+QLabel { color: #f2ede3; }
+QLineEdit, QTextEdit {
+    background: #2c2d3a;
+    color: #f2ede3;
+    border: 1px solid #444659;
+    border-radius: 4px;
+    padding: 3px 6px;
+}
+QPushButton {
+    background: #2c2d3a;
+    color: #f2ede3;
+    border: 1px solid #444659;
+    border-radius: 4px;
+    padding: 6px 14px;
+}
+QPushButton:hover {
+    background: #383a4a;
+    border-color: #c9a15a;
+}
+QTableWidget {
+    background-color: #24252f;
+    alternate-background-color: #2a2b36;
+    color: #f2ede3;
+    border: 1px solid #383a4a;
+    border-radius: 8px;
+    gridline-color: #383a4a;
+}
+QTableWidget::item:selected {
+    background-color: #383a4a;
+    color: #c9a15a;
+}
+QTableCornerButton::section {
+    background-color: #2c2d3a;
+    border: 1px solid #383a4a;
+}
+QHeaderView::section {
+    background-color: #2c2d3a;
+    color: #c9a15a;
+    padding: 4px;
+    border: 1px solid #383a4a;
+    font-weight: bold;
+}
+QScrollBar:vertical {
+    border: none;
+    background: #20212b;
+    width: 12px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background: #444659;
+    min-height: 20px;
+    border-radius: 6px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #c9a15a;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QMenuBar {
+    background-color: #20212b;
+    color: #f2ede3;
+}
+QMenuBar::item:selected {
+    background-color: #383a4a;
+}
+QMenu {
+    background-color: #2c2d3a;
+    color: #f2ede3;
+    border: 1px solid #444659;
+}
+QMenu::item:selected {
+    background-color: #383a4a;
+    color: #c9a15a;
+}
+"""
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     
     global_font = app.font()
     global_font.setPointSize(11)
     app.setFont(global_font)
+    app.setStyleSheet(STYLE_SHEET)
     
     window = ShlokaManager()
     window.show()

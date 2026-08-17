@@ -51,6 +51,8 @@ DEFAULTS = {
     # --- Hotkeys ---
     "hotkeys/dismiss": "ctrl+alt+x",
     "hotkeys/enabled": True,
+    "hotkeys/ctrl_click_hide": False,
+    "hotkeys/ctrl_click_pause": False,
 
     # --- Startup ---
     "startup/launch_with_windows": False,

@@ -79,6 +79,7 @@ class SmritiApp:
         self.popup.dismissed.connect(self._on_popup_dismissed)
         self.popup.next_requested.connect(self._show_next)
         self.popup.prev_requested.connect(self._show_prev)
+        self.popup.pause_requested.connect(lambda: self.tray.action_pause.setChecked(True))
         self.popup.meaning_toggled.connect(self._on_meaning_toggled)
 
         config.changed.connect(self._on_config_changed)

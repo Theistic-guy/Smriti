@@ -139,6 +139,7 @@ class PopupWindow(QWidget):
     dismissed = Signal()
     next_requested = Signal()
     prev_requested = Signal()
+    pause_requested = Signal()
     meaning_toggled = Signal(bool)   # True while meaning is expanded/open
 
     def __init__(self):
@@ -543,6 +544,12 @@ class PopupWindow(QWidget):
     # ------------------------------------------------------------------
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if config.get("hotkeys/ctrl_click_hide") and (event.modifiers() & Qt.ControlModifier):
+                self.dismiss()
+                if config.get("hotkeys/ctrl_click_pause"):
+                    self.pause_requested.emit()
+                return
+
             self._press_global_pos = event.globalPosition().toPoint()
             self._drag_offset = self._press_global_pos - self.pos()
             self._is_dragging = False

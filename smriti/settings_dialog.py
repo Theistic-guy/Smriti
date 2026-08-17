@@ -300,6 +300,27 @@ class SettingsDialog(QDialog):
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #999; font-size: 11px;")
         form.addRow(hint)
+        
+        # New quick hide features
+        form.addRow(QLabel("")) # Spacer
+        
+        ctrl_click = QCheckBox("Ctrl+Click on popup to quick hide")
+        ctrl_click.blockSignals(True)
+        ctrl_click.setChecked(config.get("hotkeys/ctrl_click_hide"))
+        ctrl_click.blockSignals(False)
+        ctrl_click.toggled.connect(lambda v: config.set("hotkeys/ctrl_click_hide", v))
+        form.addRow(ctrl_click)
+        
+        ctrl_pause = QCheckBox("Also pause the app when quick hiding")
+        ctrl_pause.blockSignals(True)
+        ctrl_pause.setChecked(config.get("hotkeys/ctrl_click_pause"))
+        ctrl_pause.blockSignals(False)
+        ctrl_pause.setEnabled(config.get("hotkeys/ctrl_click_hide"))
+        ctrl_pause.toggled.connect(lambda v: config.set("hotkeys/ctrl_click_pause", v))
+        form.addRow(ctrl_pause)
+        
+        # Link the two checkboxes
+        ctrl_click.toggled.connect(ctrl_pause.setEnabled)
 
         return w
 

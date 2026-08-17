@@ -592,69 +592,74 @@ class PopupWindow(QWidget):
 
     def _replay_click_below(self, global_pos: QPoint, button=Qt.LeftButton) -> None:
         """A genuine click (no drag) with click-through enabled: pass
-        it through to whatever's actually underneath the popup, by
-        briefly hiding the card and synthesizing the same button's
-        click at the same screen position. Windows-only for now — on
-        other platforms the click is simply absorbed, same as before.
+        it through to whatever's actually underneath the popup.
 
-        Two things used to make this misfire intermittently for the
-        left button (and would have affected right/middle too):
-        1. DRAG_THRESHOLD_PX was 4px — smaller than ordinary hand
-           tremor during a click, so a good fraction of genuine clicks
-           were misclassified as drags and never reached this method
-           at all (fixed above by loosening the threshold — though
-           this only ever applied to the left button; right/middle
-           never went through the drag check to begin with).
-        2. The hide -> synthesize-click -> show sequence ran entirely
-           synchronously inside the mouse event handler, with a single
-           QApplication.processEvents() call to "flush" the hide. That
-           doesn't reliably guarantee the OS/compositor has finished
-           un-mapping the window before the synthetic click fires, so
-           the click could occasionally still land on this popup
-           instead of the window beneath it. Deferring the actual
-           synthesis to the next event-loop iteration via
-           QTimer.singleShot gives Qt's own loop — rather than a
-           manual processEvents() call — the chance to finish the hide
-           first, which is a more reliable ordering guarantee."""
+        We cannot rely on the OS to pass the click through automatically
+        because the OS cannot predict the future — it doesn't know if a
+        mouse-down is going to be a click or a drag until the mouse is
+        released or moved. Thus we MUST intercept the event.
+        
+        Instead of the old `hide()` -> synthesize -> `show()` method
+        (which caused a visual flicker), we briefly make the window
+        transparent to input via the Windows API, synthesize the click
+        so the OS passes it to the window beneath us, and then restore
+        our window style."""
         if sys.platform != "win32":
             return
         if self._click_through_pending:
             return  # a previous replay hasn't finished yet — don't overlap
         self._click_through_pending = True
-        was_visible = self.isVisible()
-        self.hide()
-        QTimer.singleShot(0, lambda: self._do_replay_click(global_pos, was_visible, button))
+        QTimer.singleShot(0, lambda: self._do_replay_click(global_pos, button))
 
-    def _do_replay_click(self, global_pos: QPoint, was_visible: bool, button) -> None:
+    def _do_replay_click(self, global_pos: QPoint, button) -> None:
         user32 = ctypes.windll.user32
+        hwnd = int(self.winId())
+        
+        GWL_EXSTYLE = -20
+        WS_EX_TRANSPARENT = 0x00000020
+        
+        # 1. Temporarily make our window transparent to mouse events
+        exstyle = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_TRANSPARENT)
+
+        # 2. Synthesize the click (will fall through to the window below)
         user32.SetCursorPos(global_pos.x(), global_pos.y())
         down_flag, up_flag = self._MOUSE_EVENT_FLAGS.get(
             button, self._MOUSE_EVENT_FLAGS[Qt.LeftButton]
         )
         user32.mouse_event(down_flag, 0, 0, 0, 0)
         user32.mouse_event(up_flag, 0, 0, 0, 0)
-        if was_visible:
-            self.show()
-        self._click_through_pending = False
+        
+        # 3. Restore the window style shortly after. The delay ensures the OS 
+        # processes the synthesized click while we are still transparent.
+        QTimer.singleShot(50, lambda: self._restore_exstyle(hwnd, exstyle))
 
     def _replay_wheel_below(self, global_pos: QPoint, delta: int) -> None:
-        """Same idea as _replay_click_below, but for a wheel notch.
-        angleDelta().y() already comes out in the same units Windows
-        expects for MOUSEEVENTF_WHEEL (multiples of 120 per notch), so
-        it's passed straight through."""
+        """Same idea as _replay_click_below, but for a wheel notch."""
         if sys.platform != "win32" or delta == 0:
             return
         if self._click_through_pending:
             return
         self._click_through_pending = True
-        was_visible = self.isVisible()
-        self.hide()
-        QTimer.singleShot(0, lambda: self._do_replay_wheel(global_pos, was_visible, delta))
+        QTimer.singleShot(0, lambda: self._do_replay_wheel(global_pos, delta))
 
-    def _do_replay_wheel(self, global_pos: QPoint, was_visible: bool, delta: int) -> None:
+    def _do_replay_wheel(self, global_pos: QPoint, delta: int) -> None:
         user32 = ctypes.windll.user32
+        hwnd = int(self.winId())
+        
+        GWL_EXSTYLE = -20
+        WS_EX_TRANSPARENT = 0x00000020
+        
+        exstyle = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_TRANSPARENT)
+
         user32.SetCursorPos(global_pos.x(), global_pos.y())
         user32.mouse_event(self.MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
-        if was_visible:
-            self.show()
+        
+        QTimer.singleShot(50, lambda: self._restore_exstyle(hwnd, exstyle))
+        
+    def _restore_exstyle(self, hwnd: int, original_exstyle: int) -> None:
+        user32 = ctypes.windll.user32
+        GWL_EXSTYLE = -20
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, original_exstyle)
         self._click_through_pending = False

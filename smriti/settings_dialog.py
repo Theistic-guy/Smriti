@@ -8,13 +8,14 @@ paint since it reads straight from Config too).
 """
 
 from __future__ import annotations
+import os
 from PySide6.QtWidgets import (
     QDialog, QTabWidget, QWidget, QVBoxLayout, QFormLayout, QHBoxLayout,
     QSpinBox, QDoubleSpinBox, QCheckBox, QComboBox, QLineEdit, QPushButton,
     QLabel, QColorDialog, QFileDialog, QSlider, QFontComboBox,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QIcon
 
 from .config import config
 
@@ -57,6 +58,10 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Smriti — Settings")
+        
+        icon_path = os.path.join(os.path.dirname(__file__), "smriti_icon.svg")
+        self.setWindowIcon(QIcon(icon_path))
+        
         self.setMinimumSize(460, 520)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 

@@ -1,0 +1,27 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background medallion -->
+  <circle cx="256" cy="256" r="246" fill="#1e1f29" stroke="#c9a15a" stroke-width="8"/>
+
+  <!-- Diya (lamp) base — a single simple curve, standing in for the bowl -->
+  <path d="M 176 348 Q 256 396 336 348"
+        fill="none" stroke="#c9a15a" stroke-width="16"
+        stroke-linecap="round"/>
+
+  <!-- Flame — outer body -->
+  <path d="M 256 104
+           C 202 168 182 216 188 262
+           C 192 304 221 330 256 336
+           C 291 330 320 304 324 262
+           C 330 216 310 168 256 104
+           Z"
+        fill="#c9a15a"/>
+
+  <!-- Flame — inner core -->
+  <path d="M 256 168
+           C 228 204 219 230 223 254
+           C 226 276 238 289 256 292
+           C 274 289 286 276 289 254
+           C 293 230 284 204 256 168
+           Z"
+        fill="#f2ede3"/>
+</svg>

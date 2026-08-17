@@ -11,22 +11,12 @@ from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 from PySide6.QtCore import Qt, Signal, QObject
 
 
-def _make_icon() -> QIcon:
-    """Draw a simple 'S' medallion icon so we don't need an asset file."""
-    size = 64
-    pix = QPixmap(size, size)
-    pix.fill(Qt.transparent)
-    painter = QPainter(pix)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setBrush(QColor("#1e1f29"))
-    painter.setPen(QColor("#c9a15a"))
-    painter.drawEllipse(2, 2, size - 4, size - 4)
-    font = QFont("Georgia", 28, QFont.Bold)
-    painter.setFont(font)
-    painter.setPen(QColor("#c9a15a"))
-    painter.drawText(pix.rect(), Qt.AlignCenter, "S")
-    painter.end()
-    return QIcon(pix)
+import os
+
+def get_icon() -> QIcon:
+    """Load the Smriti logo."""
+    icon_path = os.path.join(os.path.dirname(__file__), "smriti_icon.svg")
+    return QIcon(icon_path)
 
 
 class SmritiTray(QObject):
@@ -39,7 +29,7 @@ class SmritiTray(QObject):
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self._config = config
-        self.icon = QSystemTrayIcon(_make_icon())
+        self.icon = QSystemTrayIcon(get_icon())
         self.icon.setToolTip("Smriti — daily shloka reminders")
 
         self.menu = QMenu()

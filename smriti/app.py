@@ -80,6 +80,7 @@ class SmritiApp:
         self.popup.next_requested.connect(self._show_next)
         self.popup.prev_requested.connect(self._show_prev)
         self.popup.pause_requested.connect(lambda: self.tray.action_pause.setChecked(True))
+        self.popup.settings_requested.connect(self.open_settings)
         self.popup.meaning_toggled.connect(self._on_meaning_toggled)
 
         config.changed.connect(self._on_config_changed)
@@ -180,13 +181,17 @@ class SmritiApp:
 
     def _on_pause_toggled(self, paused: bool):
         if paused:
+            # We don't touch the hide_timer or dismiss the popup here.
+            # If a popup is showing, it will just finish its normal duration
+            # and disappear. After it does, _schedule_next_cycle won't start
+            # the next timer because timing/enabled is False.
             self.cycle_timer.stop()
-            self.hide_timer.stop()
-            self.popup.dismiss()
         else:
-            # Mirrors the normal "popup just disappeared" flow: wait a
-            # full interval, then show the next one.
-            self._schedule_next_cycle()
+            # If a popup is already on screen, it will schedule the next cycle
+            # automatically when it hides. We only need to manually kickstart
+            # the cycle timer if there is no popup currently showing.
+            if not self.popup.isVisible():
+                self._schedule_next_cycle()
 
     def _on_config_changed(self, key: str, value):
         if key == "timing/interval_seconds":
@@ -195,6 +200,12 @@ class SmritiApp:
             # next time the wait starts, not retroactively.
             if self.cycle_timer.isActive():
                 self._schedule_next_cycle()
+        elif key == "timing/enabled":
+            # If the user toggled the "Active" checkbox in the Settings Dialog,
+            # we need to sync that state to the tray menu. Setting the tray
+            # menu's checked state will automatically trigger the real pause
+            # logic (stopping timers and hiding the current popup).
+            self.tray.action_pause.setChecked(not value)
         elif key == "content/csv_path":
             self.source.reload()
         elif key in ("hotkeys/dismiss", "hotkeys/enabled"):

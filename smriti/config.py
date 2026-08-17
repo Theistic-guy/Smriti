@@ -29,11 +29,15 @@ DEFAULTS = {
     "appearance/accent_color": "#c9a15a",  # gold-ish accent
     "appearance/text_color": "#f2ede3",
     "appearance/font_family": "Georgia",
-    "appearance/font_size": 20,
+    "appearance/font_size_sanskrit": 20,
+    "appearance/font_size_meaning": 15,
+    "appearance/font_size_ui": 13,
     "appearance/show_border": True,
     "appearance/border_width": 1,
     "appearance/blur_shadow": True,
     "appearance/theme": "dark",            # "dark" or "light"
+    "appearance/show_settings_btn": False,
+    "appearance/show_pause_btn": False,
 
     # --- Behaviour ---
     "behaviour/click_through": False,

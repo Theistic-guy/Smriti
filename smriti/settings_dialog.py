@@ -82,6 +82,14 @@ class SettingsDialog(QDialog):
         layout.addLayout(button_row)
 
         self.setStyleSheet(STYLE_SHEET)
+        
+        config.changed.connect(self._on_config_changed)
+        
+    def _on_config_changed(self, key: str, value):
+        if key == "timing/enabled" and hasattr(self, "_enabled_checkbox"):
+            self._enabled_checkbox.blockSignals(True)
+            self._enabled_checkbox.setChecked(value)
+            self._enabled_checkbox.blockSignals(False)
 
     # ------------------------------------------------------------------
     def _build_timing_tab(self) -> QWidget:
@@ -106,12 +114,12 @@ class SettingsDialog(QDialog):
         interval.valueChanged.connect(lambda v: config.set("timing/interval_seconds", v))
         form.addRow("Time between popups", interval)
 
-        enabled = QCheckBox("Active (uncheck to pause popups)")
-        enabled.blockSignals(True)
-        enabled.setChecked(config.get("timing/enabled"))
-        enabled.blockSignals(False)
-        enabled.toggled.connect(lambda v: config.set("timing/enabled", v))
-        form.addRow(enabled)
+        self._enabled_checkbox = QCheckBox("Active (uncheck to pause popups)")
+        self._enabled_checkbox.blockSignals(True)
+        self._enabled_checkbox.setChecked(config.get("timing/enabled"))
+        self._enabled_checkbox.blockSignals(False)
+        self._enabled_checkbox.toggled.connect(lambda v: config.set("timing/enabled", v))
+        form.addRow(self._enabled_checkbox)
 
         preview_row = QHBoxLayout()
         preview_btn = QPushButton("Preview a shloka now")
@@ -182,13 +190,29 @@ class SettingsDialog(QDialog):
         )
         form.addRow("Font", font_combo)
 
-        font_size = QSpinBox()
-        font_size.setRange(7, 60)
-        font_size.blockSignals(True)
-        font_size.setValue(config.get("appearance/font_size"))
-        font_size.blockSignals(False)
-        font_size.valueChanged.connect(lambda v: config.set("appearance/font_size", v))
-        form.addRow("Font size", font_size)
+        fs_sanskrit = QSpinBox()
+        fs_sanskrit.setRange(7, 60)
+        fs_sanskrit.blockSignals(True)
+        fs_sanskrit.setValue(config.get("appearance/font_size_sanskrit"))
+        fs_sanskrit.blockSignals(False)
+        fs_sanskrit.valueChanged.connect(lambda v: config.set("appearance/font_size_sanskrit", v))
+        form.addRow("Sanskrit font size", fs_sanskrit)
+
+        fs_meaning = QSpinBox()
+        fs_meaning.setRange(7, 60)
+        fs_meaning.blockSignals(True)
+        fs_meaning.setValue(config.get("appearance/font_size_meaning"))
+        fs_meaning.blockSignals(False)
+        fs_meaning.valueChanged.connect(lambda v: config.set("appearance/font_size_meaning", v))
+        form.addRow("Translation font size", fs_meaning)
+
+        fs_ui = QSpinBox()
+        fs_ui.setRange(7, 60)
+        fs_ui.blockSignals(True)
+        fs_ui.setValue(config.get("appearance/font_size_ui"))
+        fs_ui.blockSignals(False)
+        fs_ui.valueChanged.connect(lambda v: config.set("appearance/font_size_ui", v))
+        form.addRow("UI font size (buttons & refs)", fs_ui)
 
         border = QCheckBox("Show border")
         border.blockSignals(True)
@@ -196,6 +220,22 @@ class SettingsDialog(QDialog):
         border.blockSignals(False)
         border.toggled.connect(lambda v: config.set("appearance/show_border", v))
         form.addRow(border)
+        
+        form.addRow(QLabel("")) # Spacer
+        
+        show_settings = QCheckBox("Show 'Settings' button on popup")
+        show_settings.blockSignals(True)
+        show_settings.setChecked(config.get("appearance/show_settings_btn"))
+        show_settings.blockSignals(False)
+        show_settings.toggled.connect(lambda v: config.set("appearance/show_settings_btn", v))
+        form.addRow(show_settings)
+        
+        show_pause = QCheckBox("Show 'Hide & Pause' button on popup")
+        show_pause.blockSignals(True)
+        show_pause.setChecked(config.get("appearance/show_pause_btn"))
+        show_pause.blockSignals(False)
+        show_pause.toggled.connect(lambda v: config.set("appearance/show_pause_btn", v))
+        form.addRow(show_pause)
 
         return w
 
@@ -331,6 +371,9 @@ class SettingsDialog(QDialog):
 
 
 STYLE_SHEET = """
+QWidget {
+    font-size: 14px;
+}
 QDialog {
     background-color: #20212b;
     color: #f2ede3;

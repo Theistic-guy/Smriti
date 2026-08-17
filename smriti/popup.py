@@ -110,6 +110,10 @@ class _IconButton(QToolButton):
     def set_active(self, active: bool):
         self.setStyleSheet(self._style(active))
 
+    def set_font_size(self, size: int):
+        self._font_size = size
+        self.setStyleSheet(self._style())
+
     def _style(self, active: bool = False) -> str:
         bg = "rgba(201,161,90,0.28)" if active else "rgba(255,255,255,0.08)"
         return f"""
@@ -140,6 +144,7 @@ class PopupWindow(QWidget):
     next_requested = Signal()
     prev_requested = Signal()
     pause_requested = Signal()
+    settings_requested = Signal()
     meaning_toggled = Signal(bool)   # True while meaning is expanded/open
 
     def __init__(self):
@@ -178,24 +183,38 @@ class PopupWindow(QWidget):
         self._resize_anim.setEasingCurve(QEasingCurve.InOutQuad)
         self._resize_anim.setDuration(220)
 
+        ui_size = config.get("appearance/font_size_ui")
+
         # Right-docked group: close (elongated hit target) + meaning.
         self.close_btn = _IconButton(
             "\u2715", "Close", self,
             width=CLOSE_BUTTON_WIDTH, border_radius=BUTTON_SIZE // 2,
+            font_size=ui_size
         )   # ✕
         self.close_btn.clicked.connect(lambda: self.dismiss())
 
-        self.meaning_btn = _IconButton("\u24d8", "Show meaning", self)  # ⓘ
+        self.meaning_btn = _IconButton("\u24d8", "Show meaning", self, font_size=ui_size + 2)  # ⓘ
         self.meaning_btn.clicked.connect(self.toggle_meaning)
+        
+        self.settings_btn = _IconButton("\u2630", "Settings", self, font_size=ui_size + 5)  # ☰
+        self.settings_btn.clicked.connect(self.settings_requested.emit)
+        
+        # Center: pause button
+        self.pause_btn = _IconButton(
+            "||", "Hide and pause", self,
+            width=CLOSE_BUTTON_WIDTH + 8, border_radius=BUTTON_SIZE // 2,
+            font_size=ui_size
+        )   # ||
+        self.pause_btn.clicked.connect(lambda: (self.dismiss(), self.pause_requested.emit()))
 
         # Left-docked group: grow/shrink the text area, session-only.
         self.expand_btn = _IconButton(
-            "\u25bc", "Show more (this session only)", self, font_size=ARROW_FONT_SIZE
+            "\u25bc", "Show more (this session only)", self, font_size=ui_size + 3
         )  # ▼
         self.expand_btn.clicked.connect(self._expand_text_area)
 
         self.shrink_btn = _IconButton(
-            "\u25b2", "Show less (this session only)", self, font_size=ARROW_FONT_SIZE
+            "\u25b2", "Show less (this session only)", self, font_size=ui_size + 3
         )  # ▲
         self.shrink_btn.clicked.connect(self._shrink_text_area)
 
@@ -231,6 +250,15 @@ class PopupWindow(QWidget):
         """Called when a color/font/border/radius setting changes while
         this popup may already be on screen — just needs a repaint,
         no resize."""
+        ui_size = config.get("appearance/font_size_ui")
+        self.close_btn.set_font_size(ui_size)
+        self.pause_btn.set_font_size(ui_size)
+        self.meaning_btn.set_font_size(ui_size + 2)
+        self.settings_btn.set_font_size(ui_size + 5)
+        self.expand_btn.set_font_size(ui_size + 3)
+        self.shrink_btn.set_font_size(ui_size + 3)
+
+        self._position_buttons()
         self.update()
 
     def refresh_geometry(self) -> None:
@@ -286,12 +314,14 @@ class PopupWindow(QWidget):
         card needs to be) and by paintEvent (to decide where things go)
         so the two can never drift apart."""
         font_family = config.get("appearance/font_family")
-        base_size = config.get("appearance/font_size")
+        size_sans = config.get("appearance/font_size_sanskrit")
+        size_mean = config.get("appearance/font_size_meaning")
+        size_ui = config.get("appearance/font_size_ui")
         text_width = max(card_width - 2 * CARD_PAD, 1)
 
         sans_h = 0
         if self._shloka:
-            sans_font = QFont(font_family, base_size)
+            sans_font = QFont(font_family, size_sans)
             sans_font.setBold(True)
             sans_h = QFontMetrics(sans_font).boundingRect(
                 0, 0, int(text_width), 5000, Qt.TextWordWrap, self._shloka.sanskrit
@@ -299,14 +329,14 @@ class PopupWindow(QWidget):
 
         trans_h = 0
         if meaning_open and self._shloka and self._shloka.translation:
-            trans_font = QFont(font_family, max(base_size - 5, 8))
+            trans_font = QFont(font_family, size_mean)
             trans_h = QFontMetrics(trans_font).boundingRect(
                 0, 0, int(text_width), 5000, Qt.TextWordWrap, self._shloka.translation
             ).height()
 
         ref_h = 0
         if self._shloka and self._shloka.reference:
-            ref_font = QFont(font_family, max(base_size - 7, 7))
+            ref_font = QFont(font_family, size_ui)
             ref_h = QFontMetrics(ref_font).height()
 
         return {
@@ -405,15 +435,32 @@ class PopupWindow(QWidget):
     def _position_buttons(self) -> None:
         y = int(self._button_row_top())
 
-        # Right-docked group: close, then meaning to its left.
+        # Right-docked group: close, then meaning to its left, then settings (optional)
         right_x = self.width() - BUTTON_MARGIN - CLOSE_BUTTON_WIDTH
         self.close_btn.move(right_x, y)
-        self.meaning_btn.move(right_x - BUTTON_SIZE - 6, y)
+        
+        right_x -= (BUTTON_SIZE + 6)
+        self.meaning_btn.move(right_x, y)
+        
+        if config.get("appearance/show_settings_btn"):
+            right_x -= (BUTTON_SIZE + 6)
+            self.settings_btn.move(right_x, y)
+            self.settings_btn.show()
+        else:
+            self.settings_btn.hide()
 
         # Left-docked group: down-arrow, then up-arrow to its right.
         left_x = BUTTON_MARGIN
         self.expand_btn.move(left_x, y)
         self.shrink_btn.move(left_x + BUTTON_SIZE + 6, y)
+        
+        # Center group: Pause button (optional)
+        if config.get("appearance/show_pause_btn"):
+            center_x = (self.width() - self.pause_btn.width()) // 2
+            self.pause_btn.move(center_x, y)
+            self.pause_btn.show()
+        else:
+            self.pause_btn.hide()
 
     # ------------------------------------------------------------------
     # Fade animation helpers
@@ -482,14 +529,16 @@ class PopupWindow(QWidget):
 
         layout = self._compute_layout(self.width(), meaning_open=self._meaning_open)
         font_family = config.get("appearance/font_family")
-        base_size = config.get("appearance/font_size")
+        size_sans = config.get("appearance/font_size_sanskrit")
+        size_mean = config.get("appearance/font_size_meaning")
+        size_ui = config.get("appearance/font_size_ui")
         button_row_top = self._button_row_top()
 
         content_left = card_rect.left() + CARD_PAD
         content_width = layout["text_width"]
 
         # --- Sanskrit verse, top-aligned ---
-        sans_font = QFont(font_family, base_size)
+        sans_font = QFont(font_family, size_sans)
         sans_font.setBold(True)
         painter.setFont(sans_font)
         painter.setPen(text_color)
@@ -500,7 +549,7 @@ class PopupWindow(QWidget):
 
         # --- Reference tag, right above the (fixed) button row ---
         if self._shloka.reference:
-            ref_font = QFont(font_family, max(base_size - 7, 7))
+            ref_font = QFont(font_family, size_ui)
             painter.setFont(ref_font)
             painter.setPen(accent)
             ref_h = layout["ref_h"]
@@ -518,7 +567,7 @@ class PopupWindow(QWidget):
                               int(content_left + content_width), int(y))
             y += SEP_GAP
 
-            trans_font = QFont(font_family, max(base_size - 5, 8))
+            trans_font = QFont(font_family, size_mean)
             painter.setFont(trans_font)
             painter.setPen(QColor(text_color).lighter(120))
             # Exactly the height the sizing pass reserved (+ a tiny

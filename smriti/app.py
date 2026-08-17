@@ -40,6 +40,11 @@ class SmritiApp:
         self.app = app
         app.setQuitOnLastWindowClosed(False)  # tray-only app: closing popup != quitting
 
+        # Reset the master pause state on launch based on the startup preference.
+        # This prevents a pause from a previous session from getting stuck and
+        # causing the app to launch paused every time.
+        config.set("timing/enabled", not config.get("startup/start_paused"))
+
         self.source = ShlokaSource()
         self.popup = PopupWindow()
         self.tray = SmritiTray(config)

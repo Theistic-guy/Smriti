@@ -1,1 +1,1 @@
-nuitka --standalone --enable-plugin=pyside6 --windows-console-mode=disable --include-data-dir=images=images --output-filename=YourAppName --windows-icon-from-ico=your_icon.ico main.py
+nuitka --standalone --windows-icon-from-ico=smriti/smriti_icon.ico --output-filename=Smriti --enable-plugin=pyside6 --windows-console-mode=disable --include-data-file=shlokas.csv=shlokas.csv --include-data-file=smriti/smriti_icon.svg=smriti/smriti_icon.svg main.py

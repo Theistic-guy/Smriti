@@ -15,7 +15,7 @@ An elegant, distraction-free desktop application that delivers timeless wisdom r
 
 Getting started is incredibly simple:
 
-1. **Download:** Go to the [Releases](#) page and download the latest `.zip` file for Windows.
+1. **Download:** Go to the [Releases](https://github.com/Theistic-guy/Smriti/releases) page and download **[Smriti-Windows.zip](https://github.com/Theistic-guy/Smriti/releases/latest/download/Smriti-Windows.zip)**.
 2. **Extract:** Right-click the downloaded `.zip` file and select "Extract All...".
 3. **Run:** Open the extracted folder and double-click on `Smriti.exe`. That's it! 
 

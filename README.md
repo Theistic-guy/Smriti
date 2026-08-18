@@ -37,4 +37,11 @@ Smriti is built to be customized. Open the **Settings** panel to adjust:
 - **Hotkeys:** Set a custom global keyboard shortcut (like `Ctrl+Alt+X`) to instantly dismiss a popup without using your mouse or you can enable 'quick hiding' to use Ctrl+click to hide the box.
 
 ---
+#### Pop-up on Screen (draggable)
+![Popup on Screen](images/Snip_20260818_121334_000.png)
 
+#### Settings
+![Settings](images/Snip_20260818_121410_019.png)
+
+#### Shloka Manager
+![Shloka Manager](images/Snip_20260818_121457_084.png)
